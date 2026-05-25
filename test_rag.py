@@ -62,23 +62,30 @@ def run_tests():
         chunks = retrieve_relevant_context(q)
         print(f"   Retrieved {len(chunks)} chunks.")
         for idx, chunk in enumerate(chunks):
-            print(f"   [{idx+1}] File: {chunk['metadata']['file_name']} | Similarity: {chunk['similarity']:.2%}")
-            # print(f"       Text snippet: {chunk['text'][:100]}...")
+            print(f"   [{idx+1}] File: {chunk['metadata']['file_name']} | Re-rank Score: {chunk.get('rerank_score', 0.0):.4f}")
 
-    print("\n--- 🤖 Phase 7/10: Testing Hallucination Resistance & Grounded Q&A ---")
+    print("\n--- 🤖 Phase 7/10: Testing Upgraded Grounded Q&A with Memory ---")
     
     test_cases = [
         {
-            "name": "TEST 1: Present Information",
-            "query": "How do you calibrate the hydraulic pump H-400?"
+            "name": "TEST 1: Present Info (JWT Auth)",
+            "query": "Explain JWT token-based authentication.",
+            "session_id": "test_session_jwt"
         },
         {
-            "name": "TEST 2: Partially Present / Specific Information",
-            "query": "What is the security protocol for JWT refresh tokens?"
+            "name": "TEST 2: Conversational Memory Coreference Resolution",
+            "query": "How long are they valid?",
+            "session_id": "test_session_jwt" # Share same session to test memory!
         },
         {
-            "name": "TEST 3: Absent Information (Anti-Hallucination Grounding)",
-            "query": "How does this system implement quantum key encryption?"
+            "name": "TEST 3: Technical Manual (Pump Calibration)",
+            "query": "How do you calibrate the hydraulic pump H-400?",
+            "session_id": "test_session_pump"
+        },
+        {
+            "name": "TEST 4: Absent Info (Anti-Hallucination)",
+            "query": "How does this system implement quantum key encryption?",
+            "session_id": "test_session_quantum"
         }
     ]
 
@@ -88,12 +95,23 @@ def run_tests():
         print(f"❓ Question: {case['query']}")
         print(f"=========================================")
         
-        # 1. Retrieve matching chunks
-        chunks = retrieve_relevant_context(case["query"])
+        session_id = case.get("session_id")
+        refined_query = case["query"]
+        
+        # Resolve Conversational Memory query rewriting (exactly like the MCP server)
+        if session_id:
+            from src.llm import ConversationMemory, condense_query_with_history
+            history = ConversationMemory.get_history(session_id)
+            if history:
+                refined_query = condense_query_with_history(case["query"], history)
+                print(f"🔄 Memory Coreference Resolved -> Condensed Query: '{refined_query}'")
+
+        # 1. Retrieve matching chunks using refined query
+        chunks = retrieve_relevant_context(refined_query)
         
         # 2. Ask local LLM
         print("🤔 Processing via Ollama...")
-        answer = generate_grounded_answer(case["query"], chunks)
+        answer = generate_grounded_answer(case["query"], chunks, session_id=session_id)
         print(f"\n💬 Answer:\n{answer}\n")
 
 

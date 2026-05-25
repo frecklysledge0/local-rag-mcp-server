@@ -13,7 +13,8 @@ from src.config import (
     EMBEDDING_MODEL_NAME, 
     CHUNK_SIZE, 
     CHUNK_OVERLAP,
-    ensure_directories
+    ensure_directories,
+    validate_indexing_path
 )
 from src.parser import chunk_document
 
@@ -125,6 +126,8 @@ def scan_and_index_knowledge_base() -> Dict[str, Any]:
     and purges deleted documents from ChromaDB.
     """
     ensure_directories()
+    validate_indexing_path(KNOWLEDGE_BASE_DIR)
+    
     client = get_chroma_client()
     collection = get_or_create_collection(client)
     manifest = load_manifest()

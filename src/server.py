@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 from fastmcp import FastMCP
 
 # Add project root to path for external execution hosts
@@ -33,17 +34,22 @@ def index_knowledge_base() -> str:
 
 
 @mcp.tool()
-def search_knowledge_base(query: str, limit: int = 5) -> str:
+def search_knowledge_base(query: str, limit: int = 5, category: Optional[str] = None) -> str:
     """
-    Searches the local knowledge base using hybrid retrieval (vector similarity + keyword scoring)
+    Searches the local knowledge base using hybrid retrieval (vector similarity + BM25)
     and strictly filters matching chunks below the similarity threshold to prevent hallucinations.
     
     Args:
         query: The user query or search terms.
         limit: Max number of document chunks to return (default is 5).
+        category: Optional category folder to restrict search (e.g. 'docs', 'papers', 'notes').
     """
     try:
-        chunks = retrieve_relevant_context(query, limit=limit)
+        filters = {}
+        if category:
+            filters["category"] = category
+            
+        chunks = retrieve_relevant_context(query, limit=limit, filters=filters if filters else None)
         if not chunks:
             return "🔍 **No relevant documents found in the local knowledge base** that met the grounding criteria."
             
@@ -53,10 +59,10 @@ def search_knowledge_base(query: str, limit: int = 5) -> str:
             fname = meta.get("file_name", "Unknown File")
             path = meta.get("source", "")
             cat = meta.get("category", "General")
-            sim = chunk.get("similarity", 0.0)
+            score = chunk.get("rerank_score", 0.0)
             
             output += f"### Match #{idx+1} | {fname} (Category: {cat})\n"
-            output += f"- **Cosine Similarity Score**: `{sim:.1%}`\n"
+            output += f"- **Re-rank Confidence Score**: `{score:.2f}`\n"
             output += f"- **Source Path**: `file://{path}`\n"
             output += f"- **Content Chunk**:\n```text\n{chunk['text']}\n```\n\n"
         return output
@@ -65,21 +71,36 @@ def search_knowledge_base(query: str, limit: int = 5) -> str:
 
 
 @mcp.tool()
-def ask_knowledge_base(query: str) -> str:
+def ask_knowledge_base(query: str, category: Optional[str] = None, session_id: Optional[str] = None) -> str:
     """
     Executes a fully offline and strictly grounded Q&A workflow.
     Retrieves relevant text chunks from the vector database, validates relevance scores,
     and runs a local LLM prompt to generate an answer with inline source citations.
-    If no relevant documents are found, it programmatically returns a "not found" fallback.
+    Maintains conversational memory context across sequential turns if session_id is supplied.
     
     Args:
         query: The direct question to answer from the local documents.
+        category: Optional category folder to restrict search (e.g. 'docs', 'papers', 'notes').
+        session_id: Optional thread identifier to resolve coreference history memory.
     """
     try:
-        # Retrieve context chunks
-        chunks = retrieve_relevant_context(query)
-        # Synthesize grounded answer
-        return generate_grounded_answer(query, chunks)
+        filters = {}
+        if category:
+            filters["category"] = category
+            
+        # 1. Coreference Resolution / Query Condensation if history is available
+        refined_query = query
+        if session_id:
+            from src.llm import ConversationMemory, condense_query_with_history
+            history = ConversationMemory.get_history(session_id)
+            if history:
+                refined_query = condense_query_with_history(query, history)
+                
+        # 2. Retrieve candidates using refined query & filters
+        chunks = retrieve_relevant_context(refined_query, filters=filters if filters else None)
+        
+        # 3. Synthesize grounded answer
+        return generate_grounded_answer(query, chunks, session_id=session_id)
     except Exception as e:
         return f"❌ **Error running grounded inference:** `{str(e)}`"
 
