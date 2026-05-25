@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # 1. Ollama service running the local LLM engine offline
+  ollama:
+    image: ollama/ollama:latest
+    container_name: local_rag_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # 2. Automation service to pull the designated Ollama LLM model on startup
+  ollama-model-puller:
+    image: curlimages/curl:latest
+    container_name: local_rag_model_puller
+    depends_on:
+      - ollama
+    entrypoint: >
+      sh -c "
+      echo 'Waiting for Ollama service to start...';
+      until curl -s -f http://ollama:11434/api/tags > /dev/null; do
+        sleep 2;
+      done;
+      echo 'Ollama service is up! Pulling LLM model (gemma4:e4b)...';
+      curl -s -X POST http://ollama:11434/api/pull -d '{\"name\": \"gemma4:e4b\"}' -H 'Content-Type: application/json' > /dev/null;
+      echo 'Model gemma4:e4b successfully pulled!';
+      "
+
+  # 3. Antigravity FastMCP RAG server
+  rag-server:
+    build: .
+    container_name: local_rag_server
+    depends_on:
+      - ollama
+      - ollama-model-puller
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=gemma4:e4b
+      - RELEVANCE_THRESHOLD=0.65
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  ollama_storage:
